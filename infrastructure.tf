@@ -40,7 +40,7 @@ resource "aws_route53_record" "www-a-record" {
   }
 }
 
-# redirect alias, connect to redirect bucket (which connects to main bucket)
+# redirect alias, hand off to www_cloudfront for certification/redirection to main site
 resource "aws_route53_record" "redir-a-record" {
   zone_id = "${data.aws_route53_zone.route53_zone.zone_id}"
   name    = "${var.domain_name}"
@@ -60,7 +60,7 @@ resource "aws_cloudfront_distribution" "www_cloudfront_dist" {
   price_class         = "${var.price_class}"
 
   origin {
-    domain_name = "${aws_s3_bucket.www_bucket_main.website_endpoint}"
+    domain_name = "${aws_instance.wordpress_ec2.public_dns}"
     origin_id   = "website_bucket_origin"
 
     custom_origin_config {
@@ -102,46 +102,22 @@ resource "aws_cloudfront_distribution" "www_cloudfront_dist" {
 }
 
 ################################################################################
-#   STORAGE
+#   WORDPRESS
 ################################################################################
 
-# main website bucket (www.brendanmccloskey.com)
-resource "aws_s3_bucket" "www_bucket_main" {
-  bucket        = "www.${var.domain_name}"
-  acl           = "public-read"
-  force_destroy = true
+resource "aws_security_group" "wordpress_securitygroup" {
+  name = "WordPress-SecurityGroup"
+}
 
-  # policy allows website files (e.g. index.html) to be retrievable
-  policy = <<POLICY
-{
-  "Version":"2012-10-17",
-  "Statement":[{
-    "Sid":"PublicReadForGetBucketObjects",
-        "Effect":"Allow",
-      "Principal": "*",
-      "Action":"s3:GetObject",
-      "Resource":["arn:aws:s3:::www.${var.domain_name}/*"
-      ]
-    }
+resource "aws_instance" "wordpress_ec2" {
+  ami = "ami-cce584b3"
+  instance_type = "t2.micro"
+
+  security_groups = [
+    "${aws_security_group.wordpress_securitygroup.name}"
   ]
-}
-POLICY
 
-  # connect to main document and branch from there
-  website {
-    index_document = "index.html"
+  tags {
+    Name = "WordPress"
   }
-
-  # point to log bucket
-  logging {
-    target_bucket = "${aws_s3_bucket.bucket_log.bucket}"
-    target_prefix = "log/"
-  }
-}
-
-# log bucket
-resource "aws_s3_bucket" "bucket_log" {
-  bucket        = "logs.${var.domain_name}"
-  acl           = "log-delivery-write"
-  force_destroy = true
 }
