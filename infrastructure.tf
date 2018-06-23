@@ -76,7 +76,7 @@ resource "aws_security_group_rule" "wordpress_security_ingress_ssh" {
   protocol = "tcp"
   security_group_id = "${aws_security_group.wordpress_securitygroup.id}"
   type = "ingress"
-  cidr_blocks = ["159.63.144.228/32"]
+  cidr_blocks = ["0.0.0.0/0"]
 }
 
 # default in
@@ -113,6 +113,7 @@ resource "aws_eip" "wordpress_eip" {
 resource "aws_instance" "wordpress_ec2" {
   ami = "ami-cce584b3"
   instance_type = "t2.micro"
+  key_name = "wordpress"
   associate_public_ip_address = true
 
   security_groups = [

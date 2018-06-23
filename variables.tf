@@ -9,8 +9,3 @@ variable "aws_region" {
 variable "domain_name" {}
 variable "website_zone_id" {}
 
-# certificate/cloudfront information
-variable "price_class" {
-  default = "PriceClass_100"
-}
-variable "certificate_arn" {}
