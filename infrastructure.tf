@@ -1,12 +1,7 @@
 /*  Brendan McCloskey    mbrendan@vt.edu    www.brendanmccloskey.com
     Practice script, used for setting up infrastructure with AWS hosted website
 
-    Route53 -> Cloudfront (for https) -> S3
-    www.brendanmccloskey.com is the main website, all requests to brendanmccloskey.com are
-    redirected to the main website (alias connecting it to the www cloudfront dist)
-
-    Also will upload files, must run <python indexfiles.py> to create this file, then upload
-        using <terraform apply>. Need to delete files before reuploading on main website.
+    Route53 -> EC2 with Wordpress (Bitnami)
 */
 
 ################################################################################
@@ -19,7 +14,7 @@ provider "aws" {
 }
 
 ################################################################################
-#   ALIAS, CERTIFICATE SETUP
+#   ALIAS SETUP
 ################################################################################
 
 # find specific route53 zone with correct ns setup
@@ -32,12 +27,8 @@ resource "aws_route53_record" "www-a-record" {
   zone_id = "${data.aws_route53_zone.route53_zone.zone_id}"
   name    = "www.${var.domain_name}"
   type    = "A"
-
-  alias {
-    name                    = "${aws_cloudfront_distribution.www_cloudfront_dist.domain_name}"
-    zone_id                 = "${aws_cloudfront_distribution.www_cloudfront_dist.hosted_zone_id}"
-    evaluate_target_health  = false
-  }
+  ttl = 300
+  records = ["${aws_eip.wordpress_eip.public_ip}"]
 }
 
 # redirect alias, hand off to www_cloudfront for certification/redirection to main site
@@ -45,79 +36,97 @@ resource "aws_route53_record" "redir-a-record" {
   zone_id = "${data.aws_route53_zone.route53_zone.zone_id}"
   name    = "${var.domain_name}"
   type    = "A"
-
-  alias {
-    name                    = "${aws_cloudfront_distribution.www_cloudfront_dist.domain_name}"
-    zone_id                 = "${aws_cloudfront_distribution.www_cloudfront_dist.hosted_zone_id}"
-    evaluate_target_health  = false
-  }
+  ttl = 300
+  records = ["${aws_eip.wordpress_eip.public_ip}"]
 }
 
-# cloudfront distribution for www.brendanmccloskey.com (https certification)
-resource "aws_cloudfront_distribution" "www_cloudfront_dist" {
-  enabled             = true
-  aliases             = ["www.${var.domain_name}", "${var.domain_name}"]
-  price_class         = "${var.price_class}"
+################################################################################
+#   SECURITY
+################################################################################
 
-  origin {
-    domain_name = "${aws_instance.wordpress_ec2.public_dns}"
-    origin_id   = "website_bucket_origin"
+resource "aws_security_group" "wordpress_securitygroup" {
+  name = "WordPress-SecurityGroup"
+  description = "Control access to wordpress ec2 instance (managed by terraform)"
+}
 
-    custom_origin_config {
-      http_port = 80
-      https_port = 443
-      origin_protocol_policy = "http-only"
-      origin_ssl_protocols = ["TLSv1.2"]
-    }
-  }
+# http
+resource "aws_security_group_rule" "wordpress_security_ingress_http" {
+  from_port = 80
+  to_port = 80
+  protocol = "tcp"
+  security_group_id = "${aws_security_group.wordpress_securitygroup.id}"
+  type = "ingress"
+  cidr_blocks = ["0.0.0.0/0"]
+}
 
-  default_cache_behavior {
-    allowed_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cached_methods  = ["HEAD", "GET"]
-    "forwarded_values" {
-      "cookies" {
-        forward     = "none"
-      }
-      query_string  = true
-    }
-    target_origin_id        = "website_bucket_origin"
-    viewer_protocol_policy  = "redirect-to-https"
+# https
+resource "aws_security_group_rule" "wordpress_security_ingress_https" {
+  from_port = 443
+  to_port = 443
+  protocol = "tcp"
+  security_group_id = "${aws_security_group.wordpress_securitygroup.id}"
+  type = "ingress"
+  cidr_blocks = ["0.0.0.0/0"]
+}
 
-    min_ttl     = 0
-    default_ttl = 3600
-    max_ttl     = 86400
-  }
+# ssh
+resource "aws_security_group_rule" "wordpress_security_ingress_ssh" {
+  from_port = 22
+  to_port = 22
+  protocol = "tcp"
+  security_group_id = "${aws_security_group.wordpress_securitygroup.id}"
+  type = "ingress"
+  cidr_blocks = ["159.63.144.228/32"]
+}
 
-  viewer_certificate {
-    minimum_protocol_version = "TLSv1"
-    acm_certificate_arn = "${var.certificate_arn}"
-    ssl_support_method = "sni-only"
-  }
+# default in
+resource "aws_security_group_rule" "wordpress_security_ingress_reply" {
+  from_port = 1024
+  to_port = 65535
+  protocol = "tcp"
+  security_group_id = "${aws_security_group.wordpress_securitygroup.id}"
+  type = "ingress"
+  cidr_blocks = ["0.0.0.0/0"]
+}
 
-  restrictions {
-    "geo_restriction" {
-      restriction_type = "none"
-    }
-  }
+# out
+resource "aws_security_group_rule" "wordpress_security_egress_reply" {
+  from_port = 0
+  to_port = 0
+  protocol = "all"
+  security_group_id = "${aws_security_group.wordpress_securitygroup.id}"
+  type = "egress"
+  cidr_blocks = ["0.0.0.0/0"]
 }
 
 ################################################################################
 #   WORDPRESS
 ################################################################################
 
-resource "aws_security_group" "wordpress_securitygroup" {
-  name = "WordPress-SecurityGroup"
+# Elastic ip allows for consistent ip
+resource "aws_eip" "wordpress_eip" {
+  instance = "${aws_instance.wordpress_ec2.id}"
+  vpc = false
 }
 
+# Note: requires a pre-existing key named "wordpress" to already exist.
 resource "aws_instance" "wordpress_ec2" {
   ami = "ami-cce584b3"
   instance_type = "t2.micro"
+  associate_public_ip_address = true
 
   security_groups = [
     "${aws_security_group.wordpress_securitygroup.name}"
   ]
 
+  root_block_device {
+    volume_type = "standard"
+    volume_size = 40
+  }
+
   tags {
     Name = "WordPress"
+    description = "managed by terraform"
   }
 }
+
