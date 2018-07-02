@@ -22,7 +22,7 @@ data "aws_route53_zone" "route53_zone" {
   zone_id = "${var.website_zone_id}"
 }
 
-# main alias, connect to main bucket
+# main alias
 resource "aws_route53_record" "www-a-record" {
   zone_id = "${data.aws_route53_zone.route53_zone.zone_id}"
   name    = "www.${var.domain_name}"
@@ -31,7 +31,7 @@ resource "aws_route53_record" "www-a-record" {
   records = ["${aws_eip.wordpress_eip.public_ip}"]
 }
 
-# redirect alias, hand off to www_cloudfront for certification/redirection to main site
+# redirect alias
 resource "aws_route53_record" "redir-a-record" {
   zone_id = "${data.aws_route53_zone.route53_zone.zone_id}"
   name    = "${var.domain_name}"
